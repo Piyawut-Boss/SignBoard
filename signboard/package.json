@@ -1,0 +1,22 @@
+{
+  "name": "signboard",
+  "version": "1.0.0",
+  "description": "Digital signage web app (Yodeck-style): screens, media, playlists, schedules, player",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "dev": "node --no-warnings --watch src/server.js",
+    "test": "node --no-warnings --test test/*.test.js",
+    "seed": "node --no-warnings src/seed.js",
+    "demo": "node --no-warnings src/seed.js && node --no-warnings src/server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^5.3.0",
+    "multer": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

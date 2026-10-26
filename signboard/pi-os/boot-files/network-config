@@ -1,0 +1,14 @@
+version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+    optional: true
+# Wi-Fi: remove the "#" in front of the lines below and fill in your network
+#wifis:
+#  wlan0:
+#    dhcp4: true
+#    optional: true
+#    regulatory-domain: TH
+#    access-points:
+#      "WIFI-NAME":
+#        password: "WIFI-PASSWORD"

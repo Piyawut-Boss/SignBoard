@@ -1,0 +1,48 @@
+#!/bin/bash
+# Started by ~/.xinitrc on tty1 autologin. Runs Chromium full screen on the SignBoard player
+# and restarts it if it ever exits.
+
+CONF=/boot/firmware/signboard.conf
+SERVER_URL="http://localhost:3000"
+ROTATE="normal"
+[ -f "$CONF" ] && . <(tr -d '\r' < "$CONF")   # tolerate a conf edited on Windows
+SERVER_URL="${SERVER_URL%/}"
+ORIGIN=$(echo "$SERVER_URL" | grep -oE '^https?://[^/]+')
+
+# Never blank or power-save the display
+xset s off
+xset s noblank
+xset -dpms
+
+# Rotation: normal | left | right | inverted
+OUTPUT=$(xrandr --query | awk '/ connected/ {print $1; exit}')
+[ -n "$OUTPUT" ] && xrandr --output "$OUTPUT" --rotate "$ROTATE"
+
+unclutter -idle 0.5 -root &
+openbox &
+
+PROFILE="$HOME/snap/chromium/common/signboard-profile"
+mkdir -p "$PROFILE/Default"
+
+while true; do
+  # Stop Chromium from showing "restore pages?" after a power cut
+  PREFS="$PROFILE/Default/Preferences"
+  if [ -f "$PREFS" ]; then
+    sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"[^"]*"/"exit_type":"Normal"/' "$PREFS"
+  fi
+
+  # boot.html waits for the server, then opens /player. A plain-http LAN server is
+  # treated as secure so the player's offline cache (service worker) can run.
+  /snap/bin/chromium \
+    --user-data-dir="$PROFILE" \
+    --kiosk --start-fullscreen \
+    --noerrdialogs --disable-infobars --no-first-run \
+    --disable-session-crashed-bubble --disable-features=Translate,TranslateUI \
+    --autoplay-policy=no-user-gesture-required \
+    --check-for-update-interval=31536000 \
+    --password-store=basic \
+    --overscroll-history-navigation=0 --disable-pinch \
+    --unsafely-treat-insecure-origin-as-secure="$ORIGIN" \
+    "file://$HOME/signboard/boot.html?server=$(printf %s "$SERVER_URL" | jq -sRr @uri)"
+  sleep 3
+done

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>SignBoard</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05070d; color: #b8c2dc; cursor: none;
+    font-family: 'Noto Sans Thai', 'Noto Sans', sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3vh; }
+  .spin { width: 7vmin; height: 7vmin; border: .8vmin solid #1e2a4a; border-top-color: #3b5bfd; border-radius: 50%;
+    animation: r 1s linear infinite; }
+  @keyframes r { to { transform: rotate(360deg); } }
+  h1 { color: #fff; font-size: 4.5vmin; margin: 0; font-weight: 600; }
+  p { font-size: 2.6vmin; margin: 0; }
+</style>
+</head>
+<body>
+<div class="spin"></div>
+<h1>กำลังเชื่อมต่อเซิร์ฟเวอร์</h1>
+<p id="server"></p>
+<p id="hint"></p>
+<script>
+  // Waits until the SignBoard server answers, then opens the player.
+  // If the server stays unreachable but this device has played before, open the player
+  // anyway: its service worker serves the cached page and media so the loop keeps running.
+  const server = (new URLSearchParams(location.search).get('server') || '').replace(/\/$/, '');
+  const played = (() => { try { return localStorage.getItem('signboard_played') === '1'; } catch { return false; } })();
+  const started = Date.now();
+  document.getElementById('server').textContent = server || 'ยังไม่ได้ตั้งค่า SERVER_URL ใน signboard.conf';
+
+  const go = () => {
+    try { localStorage.setItem('signboard_played', '1'); } catch {}
+    location.replace(server + '/player');
+  };
+
+  async function check() {
+    if (!server) return;
+    try {
+      await fetch(server + '/player', { mode: 'no-cors', cache: 'no-store' });
+      return go();
+    } catch {}
+    const waited = (Date.now() - started) / 1000;
+    if (played && waited > 45) return go();
+    if (waited > 20) document.getElementById('hint').textContent = 'ตรวจสอบสาย LAN / Wi-Fi และที่อยู่เซิร์ฟเวอร์';
+    setTimeout(check, 3000);
+  }
+  check();
+</script>
+</body>
+</html>

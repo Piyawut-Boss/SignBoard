@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signage Player</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden; cursor: none;
+    font-family: 'IBM Plex Sans Thai', system-ui, sans-serif; }
+  #stage { position: fixed; inset: 0; }
+  body.portrait #stage { width: 100vh; height: 100vw; inset: auto; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) rotate(90deg); }
+  .layer { position: absolute; inset: 0; opacity: 0; transition: opacity .8s ease; display: flex;
+    align-items: center; justify-content: center; }
+  .layer.show { opacity: 1; }
+  .layer.cut { transition: none; }
+  .layer img, .layer video { width: 100%; height: 100%; object-fit: contain; }
+  .layer iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  #pair, #empty { position: fixed; inset: 0; display: none; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; gap: 2vh; background: radial-gradient(circle at 30% 20%, #1e2a4a, #05070d 70%); }
+  #pair .code { font-size: 14vmin; font-weight: 600; letter-spacing: 2vmin; font-family: ui-monospace, monospace;
+    background: rgba(255,255,255,.08); padding: 2vmin 5vmin; border-radius: 2vmin; }
+  #pair p, #empty p { font-size: 3vmin; margin: 0; color: #b8c2dc; }
+  #pair h1, #empty h1 { font-size: 5vmin; margin: 0; }
+  #status { position: fixed; right: 1vmin; bottom: 1vmin; width: 1.2vmin; height: 1.2vmin; border-radius: 50%;
+    background: #e5484d; display: none; }
+</style>
+</head>
+<body>
+<div id="stage"><div class="layer" id="a"></div><div class="layer" id="b"></div></div>
+<div id="pair">
+  <h1>เชื่อมต่อจอนี้กับระบบ</h1>
+  <p>เข้าเมนู “จอแสดงผล” ในหน้าจัดการ แล้วกรอกรหัสนี้</p>
+  <div class="code" id="code">······</div>
+  <p id="pairHost"></p>
+</div>
+<div id="empty"><h1 id="emptyTitle">ยังไม่มีเนื้อหา</h1><p>กำหนดเพลย์ลิสต์ให้จอนี้ในหน้าจัดการ</p></div>
+<div id="status" title="ออฟไลน์"></div>
+<script>
+(() => {
+  const POLL_MS = 30000;
+  const PAIR_POLL_MS = 5000;
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+    del: (k) => { try { localStorage.removeItem(k); } catch {} },
+  };
+  const $ = (id) => document.getElementById(id);
+  let token = new URLSearchParams(location.search).get('token') || store.get('signage_token');
+  let content = null;          // latest content from server
+  let playing = null;          // content currently looping
+  let index = -1;
+  let timer = null;
+  let front = $('a'), back = $('b');
+  let seq = 0;                 // guards against events from an item that is no longer current
+
+  function show(el) {
+    ['pair', 'empty'].forEach((id) => ($(id).style.display = id === el ? 'flex' : 'none'));
+  }
+
+  function localTime() {
+    const d = new Date(), p = (n) => String(n).padStart(2, '0');
+    return { day: d.getDay(), time: `${p(d.getHours())}:${p(d.getMinutes())}`,
+      date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` };
+  }
+
+  async function register() {
+    try {
+      const r = await fetch('/api/player/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_token: token }) });
+      const data = await r.json();
+      token = data.device_token;
+      store.set('signage_token', token);
+      if (data.paired) return start();
+      $('code').textContent = data.code;
+      $('pairHost').textContent = location.host;
+      show('pair');
+    } catch {}
+    setTimeout(register, PAIR_POLL_MS);
+  }
+
+  async function fetchContent() {
+    const t = localTime();
+    const r = await fetch(`/api/player/content?token=${token}&day=${t.day}&time=${t.time}&date=${t.date}`);
+    if (r.status === 404) { store.del('signage_content'); return 'unpaired'; }
+    if (!r.ok) throw new Error('bad response');
+    content = await r.json();
+    store.set('signage_content', JSON.stringify(content));
+    syncCache();
+    $('status').style.display = 'none';
+  }
+
+  async function poll() {
+    try {
+      if ((await fetchContent()) === 'unpaired') { playing = content = null; register(); return; }
+    } catch {
+      $('status').style.display = 'block'; // offline: keep playing the cached loop
+    }
+    if (!playing || playing.version !== content?.version) {
+      // Content changed: switch now if nothing is playing, otherwise at the next item
+      if (!playing || !playing.items.length) next();
+    }
+    setTimeout(poll, POLL_MS);
+  }
+
+  // Service worker keeps the page and current media on the device (needs https,
+  // localhost, or a kiosk browser flag that treats the server as secure)
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  function syncCache() {
+    const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (sw && content) sw.postMessage({ type: 'sync', urls: content.items.map((i) => i.url) });
+  }
+
+  function start() {
+    const cached = store.get('signage_content');
+    if (cached) try { content = JSON.parse(cached); } catch {}
+    show(null);
+    poll();
+  }
+
+  function next() {
+    clearTimeout(timer);
+    if (content && (!playing || playing.version !== content.version)) {
+      playing = content;
+      index = -1;
+      document.body.classList.toggle('portrait', playing.screen?.orientation === 'portrait');
+    }
+    if (!playing || !playing.items.length) {
+      front.innerHTML = back.innerHTML = '';
+      $('emptyTitle').textContent = playing?.screen ? `${playing.screen.name}: ยังไม่มีเนื้อหา` : 'ยังไม่มีเนื้อหา';
+      show('empty');
+      return;
+    }
+    show(null);
+    index = (index + 1) % playing.items.length;
+    render(playing.items[index], playing.playlist?.transition || 'fade');
+  }
+
+  function render(item, transition) {
+    const el = back;
+    el.innerHTML = '';
+    let node;
+    const seconds = Number(item.duration) || 0;
+    const mine = ++seq;
+    const advance = () => { if (mine === seq) next(); };
+    if (item.type === 'image') {
+      node = new Image();
+      node.src = item.url;
+      timer = setTimeout(next, (seconds || 10) * 1000);
+    } else if (item.type === 'video') {
+      node = document.createElement('video');
+      Object.assign(node, { src: item.url, muted: true, autoplay: true, playsInline: true });
+      node.setAttribute('muted', '');
+      // duration 0 means "play until the video ends"
+      node.onended = () => { if (!seconds) advance(); };
+      node.onerror = advance;
+      if (seconds) timer = setTimeout(next, seconds * 1000);
+    } else {
+      node = document.createElement('iframe');
+      node.src = item.url;
+      node.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+      timer = setTimeout(next, (seconds || 30) * 1000);
+    }
+    el.appendChild(node);
+    const cut = transition === 'none';
+    [el, front].forEach((l) => l.classList.toggle('cut', cut));
+    el.classList.add('show');
+    front.classList.remove('show');
+    const old = front;
+    setTimeout(() => { if (!old.classList.contains('show')) old.innerHTML = ''; }, cut ? 0 : 900);
+    [front, back] = [el, old];
+  }
+
+  // With cached content we can start playing even if the server is unreachable;
+  // a 404 from the server sends the device back to pairing.
+  if (token && store.get('signage_content')) start(); else register();
+})();
+</script>
+</body>
+</html>
